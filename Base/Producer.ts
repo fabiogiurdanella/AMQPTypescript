@@ -11,12 +11,18 @@ export class AMQPProducer extends AMQPMessanger {
     public async publish(method: string, correlationID: string, body: any) {
         let retries = 0;
         try {
-            await this.startConnection();
+
+            if (!this.connection) {
+                await this.startConnection();
+            }
+
             if (this.channel && this.connection) {
+                
+                const origin = process.env.BBSENDER_ORIGIN;
                 
                 const message: Buffer = Buffer.from(JSON.stringify(body));
                 const options: Options.Publish = {
-                    contentType: method,
+                    contentType: origin + "|" + method,
                     correlationId: correlationID,
                 };
                 
