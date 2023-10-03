@@ -1,15 +1,30 @@
-export enum AMQPMethod {
+export enum BBSenderMethod {
     EXCEPTION                   = "exception",
     
     SEND_EMAIL                  = "send_email",
-    
+    SEND_NOTIFICATION           = "send_notification",
+
     SAVE_FILE                   = "save_file",
     READ_FILE                   = "read_file",
     DELETE_FILE                 = "delete_file",
-    
-    SEND_NOTIFICATION           = "send_notification",
-    UNKNOWN                     = "unknown",
 }
+
+export enum BBPaymentsMethod {
+    EXCEPTION                   = "exception",
+    
+    PAYMENT_INTENT              = "payment_intent",
+    PAYMENT_CONFIRM             = "payment_confirm",
+    PAYMENT_CANCEL              = "payment_cancel",
+
+    STRIPE_PUBLIC_KEY           = "stripe_public_key",
+    
+    PAYPAL_CREATE_ORDER         = "paypal_create_order",
+    PAYPAL_CONFIRM_ORDER        = "paypal_confirm_order",
+    PAYPAL_REFUND_ORDER         = "paypal_refund_order"
+
+}
+
+export type AMQPMethod = BBSenderMethod | BBPaymentsMethod;
 
 export class AMQPBody {
     constructor(object: any) {

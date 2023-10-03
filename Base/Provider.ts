@@ -1,9 +1,15 @@
 import { Message } from "amqplib";
 import { AMQPConsumer } from "./Consumer";
 import { AMQPProducer } from "./Producer";
+import { Semaphore } from "./Semaphore";
 
 type ResponseObject = Record<string, string>;
 type CallbackFunction = (msg: Message) => void;
+
+export enum AMQPProviderType {
+    BBSENDER = "BBSENDER",
+    BBPAYMENTS = "BBPAYMENTS",
+}
 
 export class AMQPProvider {
     private consumerQueue: string;
@@ -17,7 +23,10 @@ export class AMQPProvider {
     private consumer: AMQPConsumer;
     private producer: AMQPProducer;
 
-    private static instance: AMQPProvider;
+    // private static instance: AMQPProvider;
+    private static instances: Map<AMQPProviderType, AMQPProvider> = new Map();
+
+    private semaphore: Semaphore;
 
     private constructor(consumerQueue: string, producerQueue: string) {
         // Definisco le code e le routing key
@@ -35,32 +44,48 @@ export class AMQPProvider {
 
         // Definisco il producer
         this.producer = new AMQPProducer(this.producerQueue, this.producerQueueRoutingKey);
+
+        // Definisco il semaphore del producer
+        this.semaphore = new Semaphore(1);
+
     }
 
-    public static createIstance(consumerQueue: string, producerQueue: string): AMQPProvider {
-        if (!AMQPProvider.instance) {
-            AMQPProvider.instance = new AMQPProvider(consumerQueue, producerQueue);
+    // public static createIstance(consumerQueue: string, producerQueue: string): AMQPProvider {
+    //     if (!AMQPProvider.instance) {
+    //         AMQPProvider.instance = new AMQPProvider(consumerQueue, producerQueue);
+    //     }
+    //     return AMQPProvider.instance;
+    // }
+    public static createIstance(consumerQueue: string, producerQueue: string, amqpProviderType: AMQPProviderType): AMQPProvider {
+        if (!AMQPProvider.instances.has(amqpProviderType)) {
+            const instance = new AMQPProvider(consumerQueue, producerQueue);
+            AMQPProvider.instances.set(amqpProviderType, instance);
         }
-        return AMQPProvider.instance;
+        return AMQPProvider.instances.get(amqpProviderType) as AMQPProvider;
     }
 
-    public static getInstance(): AMQPProvider {
-        if (!AMQPProvider.instance) {
+
+
+    public static getInstance(amqpProviderType: AMQPProviderType): AMQPProvider {
+        // if (!AMQPProvider.instance) {
+        //     throw new Error("AMQPProvider non inizializzato");
+        // }
+        // return AMQPProvider.instance;
+        const instance = AMQPProvider.instances.get(amqpProviderType);
+        if (!instance) {
             throw new Error("AMQPProvider non inizializzato");
         }
-        return AMQPProvider.instance;
+
+        return instance;
     }
 
     public dataReceivedResponse(message: Message) {
-        console.log("Messaggio ricevuto dal consumer con correlationID: " + message.properties.correlationId);
-        console.log("Messaggio ricevuto dal consumer con body: " + message.content.toString());
-
         this.responseObject[message.properties.correlationId] = message.content.toString();
     }
 
-    public async listen() {
+    public async provideListening() {
         try {
-            await this.consumer.listenToConsumerQueue();
+            await this.consumer.startMessanger()
         } catch (err) {
             console.log(err);
             // Chiudo la connessione
@@ -68,7 +93,19 @@ export class AMQPProvider {
         }
     }
 
-    public publish(method: string, body: string, correlationID: string) {
-        this.producer.publish(method, correlationID, body);
+    public async providePublishing() {
+        try {
+            await this.producer.startMessanger();
+        } catch (err) {
+            console.log(err);
+            // Chiudo la connessione
+            await this.producer.closeConnection();
+        }
     }
+
+
+    public async publish(method: string, body: string, correlationID: string) {
+        console.log(`Invio data a ${method} con correlationID ${correlationID}`);
+        await this.producer.publish(method, correlationID, body);
+    }    
 }

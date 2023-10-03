@@ -1,6 +1,7 @@
 // import { Channel, Connection, Message, Options } from 'amqplib/callback_api';
 import { Channel, Connection, Message, Options, connect } from 'amqplib'
 
+const NUM_RETRIES = 5;
 type CallbackFunction = (msg: Message) => void;
 
 export abstract class AMQPMessanger {
@@ -17,6 +18,7 @@ export abstract class AMQPMessanger {
     protected routingKey: string;
 
     private callback: ((msg: Message) => void);
+    // Tarek è passato di qua, ciao Tarek quanto ti senti Tarek? Ciao Tarek, si mi hai scoperto, mi sento molto Tarek grazie, e tu come stai? Molto bene Tarek, mi sento proprio Tarek oggi.
 
     constructor(queue: string, routingKey: string, callback: CallbackFunction) {
         try {
@@ -85,7 +87,8 @@ export abstract class AMQPMessanger {
 
         try {
             this.channel = await this.connection.createChannel();
-            this.channel.assertExchange(this.RABBITMQ_EXCHANGE, 'direct', { durable: false });
+            console.log('Channel created');
+            await this.channel.assertExchange(this.RABBITMQ_EXCHANGE, 'direct', { durable: false });
 
         } catch (err) {
             console.error('Failed to create channel:', err);
@@ -99,43 +102,59 @@ export abstract class AMQPMessanger {
         }
 
         try {
-            this.channel.assertQueue(this.queue, { durable: false });
-            this.channel.bindQueue(this.queue, this.RABBITMQ_EXCHANGE, this.routingKey);
+            await this.channel.assertQueue(this.queue, { durable: false });
+            await this.channel.bindQueue(this.queue, this.RABBITMQ_EXCHANGE, this.routingKey);
             if (this.callback !== null) {
                 this.channel.consume(this.queue, this.callback, { noAck: true });
             }
+
+            console.log('Queue created with name', this.queue);
+
         } catch (err) {
             console.error('Failed to create queue:', err);
             throw err;
         }
     }
 
-    protected async startConnection(): Promise<void> {
+    private async __startConnection(): Promise<void> {
         await this.__createConnection();
         await this.__createChannel();
         await this.__createQueues();
-        console.log('Queues are open');
-        console.log('Connection and channel are open');
     }
 
+    public async startMessanger(): Promise<void> {
+        let retries = 0;
+        try {
+        await this.__startConnection();
+        } catch (err) {
+        console.error(err);
+        if (retries++ >= NUM_RETRIES) {
+            throw new Error('Max retries reached');
+        }
+
+        console.log('Retrying to connect to', this.RABBITMQ_HOSTNAME);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await this.__startConnection();
+        }
+    }
+
+
+
     public async closeConnection() {
-
-        return new Promise((resolve, reject) => {
-            setTimeout(async () => {
-                if (this.channel) {
-                    await this.channel.close();
-                }
-        
-                if (this.connection) {
-                    await this.connection.close();
-                }
-        
-                // Resetto le variabili
-                this.channel = null;
-                this.connection = null;
-            }, 1000);
-        });
-
-
+        try {
+            if (this.channel) {
+                await this.channel.close();
+            }
+    
+            if (this.connection) {
+                await this.connection.close();
+            }
+    
+            // Resetto le variabili
+            this.channel = null;
+            this.connection = null;
+        } catch (err) {
+            throw err;
+        }
     }
 }

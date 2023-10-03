@@ -1,14 +1,14 @@
 import { AMQPBody, AMQPMethod, AMQPPayload, AMQPResponse, AMQPStatus } from "./Base/Payload";
-import { AMQPProvider } from "./Base/Provider";
+import { AMQPProvider, AMQPProviderType } from "./Base/Provider";
 import { v4 as uuidv4 } from 'uuid';
 
 export class AMQPController {
     
     private amqpProvider: AMQPProvider;
 
-    public constructor() {
+    public constructor(amqpProviderType: AMQPProviderType) {
         try {
-            this.amqpProvider = AMQPProvider.getInstance();      
+            this.amqpProvider = AMQPProvider.getInstance(amqpProviderType);      
         } catch (err) {
             throw err;
         }
@@ -18,8 +18,8 @@ export class AMQPController {
         try {
             const payload = new AMQPPayload(amqpMethod, body);
 
-            const uuid = this.__sendData(payload);
-            const response = await this.__waitData(uuid, amqpMethod);
+            const correlationID = await this.__sendData(payload);
+            const response = await this.__waitData(correlationID, amqpMethod);
 
             if (response.status === AMQPStatus.ERROR) {
                 throw new Error(response.data);
@@ -34,31 +34,27 @@ export class AMQPController {
     }
 
 
-    private __sendData(payload: AMQPPayload) {
+    private async __sendData(payload: AMQPPayload) {
         try {
             const method = payload.method;
             const data = payload.body.toString()
-            const uuid = uuidv4() as string;
+            const correlationID = uuidv4() as string;
 
-            console.log(`Invio data a ${method} con uuid ${uuid}`);
+            await this.amqpProvider.publish(method, data, correlationID);
 
-            this.amqpProvider.publish(method, data, uuid);
-
-            return uuid;
+            return correlationID;
         } catch (err) {
             throw err;
         }
     }
 
-    private async __waitData(uuid: string, method: AMQPMethod): Promise<AMQPResponse> {
-        console.log(`In attesa di ricevere messaggio con uuid ${uuid} e method ${method}`);
-        
+    private async __waitData(correlationID: string, method: AMQPMethod): Promise<AMQPResponse> {        
         return new Promise((resolve, reject) => {
             const checkResponse = () => {
-                if (this.amqpProvider.responseObject[uuid]) {
-                    const response = this.amqpProvider.responseObject[uuid];
-                    delete this.amqpProvider.responseObject[uuid];
-                    console.log(`Ricevuto messaggio con uuid ${uuid}`);
+                if (this.amqpProvider.responseObject[correlationID]) {
+                    const response = this.amqpProvider.responseObject[correlationID];
+                    delete this.amqpProvider.responseObject[correlationID];
+                    console.log(`Ricevuto messaggio con correlationID ${correlationID}`);
                     
                     const responseObj = JSON.parse(response);
                     if (responseObj.status === "error") {
