@@ -1,10 +1,8 @@
-import { Message } from "amqplib";
-import { AMQPConsumer } from "./Consumer";
-import { AMQPProducer } from "./Producer";
-import { Semaphore } from "./Semaphore";
+import { ConsumeMessage, Message } from "amqplib";
+import { AMQPConsumer } from "./consumer";
+import { AMQPProducer } from "./producer";
 
 type ResponseObject = Record<string, string>;
-type CallbackFunction = (msg: Message) => void;
 
 export enum AMQPProviderType {
     BBSENDER = "BBSENDER",
@@ -26,8 +24,6 @@ export class AMQPProvider {
     // private static instance: AMQPProvider;
     private static instances: Map<AMQPProviderType, AMQPProvider> = new Map();
 
-    private semaphore: Semaphore;
-
     private constructor(consumerQueue: string, producerQueue: string) {
         // Definisco le code e le routing key
         this.consumerQueue = consumerQueue;
@@ -44,10 +40,6 @@ export class AMQPProvider {
 
         // Definisco il producer
         this.producer = new AMQPProducer(this.producerQueue, this.producerQueueRoutingKey);
-
-        // Definisco il semaphore del producer
-        this.semaphore = new Semaphore(1);
-
     }
 
     // public static createIstance(consumerQueue: string, producerQueue: string): AMQPProvider {
@@ -79,8 +71,10 @@ export class AMQPProvider {
         return instance;
     }
 
-    public dataReceivedResponse(message: Message) {
-        this.responseObject[message.properties.correlationId] = message.content.toString();
+    public dataReceivedResponse(msg: ConsumeMessage | null) {
+        if (msg) {
+            this.responseObject[msg.properties.correlationId] = msg.content.toString();
+        }
     }
 
     public async provideListening() {

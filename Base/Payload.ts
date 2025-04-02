@@ -1,44 +1,12 @@
-export enum BBSenderMethod {
-    EXCEPTION                   = "exception",
-    
-    SEND_EMAIL                  = "send_email",
-    SEND_NOTIFICATION           = "send_notification",
+import { ConsumeMessage } from "amqplib";
 
-    SAVE_FILE                   = "save_file",
-    READ_FILE                   = "read_file",
-    DELETE_FILE                 = "delete_file",
-}
+export type CallbackFunction = (msg: ConsumeMessage | null) => void;
 
-export enum BBPaymentsMethod {
-    EXCEPTION                   = "exception",
-    
-    PAYMENT_INTENT              = "payment_intent",
-    PAYMENT_CONFIRM             = "payment_confirm",
-    PAYMENT_CANCEL              = "payment_cancel",
+export enum BBSenderMethod {}
 
-    STRIPE_PUBLIC_KEY           = "stripe_public_key",
-    
-    PAYPAL_CREATE_ORDER         = "paypal_create_order",
-    PAYPAL_CONFIRM_ORDER        = "paypal_confirm_order",
-    PAYPAL_REFUND_ORDER         = "paypal_refund_order"
-
-}
+export enum BBPaymentsMethod {}
 
 export type AMQPMethod = BBSenderMethod | BBPaymentsMethod;
-
-export class AMQPBody {
-    constructor(object: any) {
-        for (const key in object) {
-            if (object.hasOwnProperty(key)) {
-                this[key] = object[key];
-            }
-        }
-    }
-
-    toString(): string {
-        return JSON.stringify(this);
-    }
-}
 
 export enum AMQPStatus {
     OK      = "ok",
@@ -48,7 +16,7 @@ export enum AMQPStatus {
 export class AMQPPayload {
     constructor(
         public method: AMQPMethod,
-        public body: AMQPBody
+        public body: string
     ) { }
 }
 

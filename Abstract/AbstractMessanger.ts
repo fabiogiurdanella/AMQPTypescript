@@ -1,13 +1,13 @@
-// import { Channel, Connection, Message, Options } from 'amqplib/callback_api';
-import { Channel, Connection, Message, Options, connect } from 'amqplib'
+import { Channel, ChannelModel, Options, connect } from 'amqplib'
+import { CallbackFunction } from '../Base/payload';
+import { LoggerHandler } from '../Utility/LoggerHandler';
 
 const NUM_RETRIES = 5;
-type CallbackFunction = (msg: Message) => void;
 
 export abstract class AMQPMessanger {
-    protected connection: Connection | null = null;
+    protected connection: ChannelModel | null = null;
     protected channel: Channel | null = null;
-
+    
     protected RABBITMQ_USER = process.env.RABBITMQ_USER || '';
     protected RABBITMQ_PASS = process.env.RABBITMQ_PASS || '';
     protected RABBITMQ_HOSTNAME = process.env.RABBITMQ_HOSTNAME || '';
@@ -17,22 +17,23 @@ export abstract class AMQPMessanger {
     protected queue: string;
     protected routingKey: string;
 
-    private callback: ((msg: Message) => void);
-    // Tarek è passato di qua, ciao Tarek quanto ti senti Tarek? Ciao Tarek, si mi hai scoperto, mi sento molto Tarek grazie, e tu come stai? Molto bene Tarek, mi sento proprio Tarek oggi.
+    protected retries: number = 0;
 
-    constructor(queue: string, routingKey: string, callback: CallbackFunction) {
+    private callback: CallbackFunction | null;
+
+    constructor(queue: string, routingKey: string, callback: CallbackFunction | null) {
         try {
-            this.__validateEnvVariables();
+            this.validateEnvVariables();
         } catch (err) {
             throw err;
         }
 
         this.queue = queue;
-        this.routingKey = routingKey;
+        this.routingKey = `${routingKey}_rk`;
         this.callback = callback;
     }
 
-    private __validateEnvVariables(): void {
+    private validateEnvVariables(): void {
         const requiredVariables = [
             'RABBITMQ_USER',
             'RABBITMQ_PASS',
@@ -52,7 +53,7 @@ export abstract class AMQPMessanger {
      * This function creates a connection to a RabbitMQ server using the provided credentials and
      * connection options.
      */
-    private async __createConnection(): Promise<void> {
+    private async createConnection(): Promise<void> {
         // const connectionString = `amqp://${this.RABBITMQ_USER}:${this.RABBITMQ_PASS}@${this.RABBITMQ_HOSTNAME}:${this.RABBITMQ_PORT}`;
         if (this.connection) {
             return;
@@ -67,27 +68,43 @@ export abstract class AMQPMessanger {
         };
         
         try {
-
             this.connection = await connect(connectionOptions, {
                 timeout: 20000,
                 heartbeat: 60,
-            })
+            });
 
-            console.log('Connected to', this.RABBITMQ_HOSTNAME);
+            this.connection.on('close', async () => {
+                LoggerHandler.warn("Connection closed. Attempting to reconnect...");
+                await this.closeConnection();
+                await this.startMessanger();
+            });
+
+            this.connection.on('error', async () => {
+                LoggerHandler.warn("Connection closed. Attempting to reconnect...");
+                await this.closeConnection();
+                await this.startMessanger();
+            });
+
         } catch (err) {
             console.error('Failed to connect:', err);
             throw err;
         }
     }
 
-    private async __createChannel(): Promise<void> {
+    private async createChannel(): Promise<void> {
         if (!this.connection) {
             throw new Error('No connection available.');
         }
 
         try {
             this.channel = await this.connection.createChannel();
-            console.log('Channel created');
+            
+            this.channel.on('close', async () => {
+                LoggerHandler.warn("Channel closed. Attempting to reconnect...");
+                await this.closeConnection();
+                await this.startMessanger();
+            });
+
             await this.channel.assertExchange(this.RABBITMQ_EXCHANGE, 'direct', { durable: false });
 
         } catch (err) {
@@ -96,11 +113,12 @@ export abstract class AMQPMessanger {
         }
     }
 
-    private async __createQueues(): Promise<void> {
+    private async createQueues(): Promise<void> {
         if (!this.channel) {
             throw new Error('No channel available.');
         }
 
+        
         try {
             await this.channel.assertQueue(this.queue, { durable: false });
             await this.channel.bindQueue(this.queue, this.RABBITMQ_EXCHANGE, this.routingKey);
@@ -108,37 +126,32 @@ export abstract class AMQPMessanger {
                 this.channel.consume(this.queue, this.callback, { noAck: true });
             }
 
-            console.log('Queue created with name', this.queue);
-
         } catch (err) {
             console.error('Failed to create queue:', err);
             throw err;
         }
     }
 
-    private async __startConnection(): Promise<void> {
-        await this.__createConnection();
-        await this.__createChannel();
-        await this.__createQueues();
+    private async startConnection(): Promise<void> {
+        await this.createConnection();
+        await this.createChannel();
+        await this.createQueues();
     }
 
     public async startMessanger(): Promise<void> {
-        let retries = 0;
         try {
-        await this.__startConnection();
+            await this.startConnection();
         } catch (err) {
-        console.error(err);
-        if (retries++ >= NUM_RETRIES) {
-            throw new Error('Max retries reached');
-        }
+            LoggerHandler.log(`Retries: ${this.retries}`)
+            if (this.retries++ >= NUM_RETRIES) {
+                throw new Error('Max retries reached');
+            }
 
-        console.log('Retrying to connect to', this.RABBITMQ_HOSTNAME);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        await this.__startConnection();
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            // await this.__startConnection();
+            await this.startMessanger();
         }
     }
-
-
 
     public async closeConnection() {
         try {

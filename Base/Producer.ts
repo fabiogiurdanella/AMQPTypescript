@@ -1,5 +1,5 @@
-import { connect, Channel, Connection, Message, Options } from 'amqplib/callback_api';
-import { AMQPMessanger } from '../Abstract/AbstractMessanger';
+import { Options } from 'amqplib/callback_api';
+import { AMQPMessanger } from '../Abstract/abstractMessanger';
 
 export class AMQPProducer extends AMQPMessanger {  
     constructor(queue: string, routingKey: string) {
@@ -14,16 +14,22 @@ export class AMQPProducer extends AMQPMessanger {
 
             if (this.channel && this.connection) {
                 
-                const origin = process.env.BBSENDER_ORIGIN;
-                
+                const origin = process.env.BB_ORIGIN;
+                if (!origin) {
+                    throw new Error("Missing Origin of software")
+                }
+
                 const message: Buffer = Buffer.from(JSON.stringify(body));
                 const options: Options.Publish = {
                     contentType: origin + "|" + method,
                     correlationId: correlationID,
                 };
+
+                if (this.channel) {
+
+                }
                 
                 this.channel.sendToQueue(this.queue, message, options);
-                console.log('Message sent to queue', this.queue, 'with correlationID', correlationID);
                 await new Promise((resolve) => setTimeout(resolve, 1500)); // Timer di 1.5 secondi per evitare di sovraccaricare il server
             }
         } catch (err) {

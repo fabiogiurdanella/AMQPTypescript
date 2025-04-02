@@ -1,0 +1,17 @@
+{
+  "name": "amqptypescript",
+  "version": "1.0.0",
+  "description": "const bbpaymentsAMQPProvider = AMQPProvider.createIstance(bbpaymentsConsumerQueue, bbpaymentsProducerQueue, AMQPProviderType.BBPAYMENTS);\r     bbpaymentsAMQPProvider.provideListening();\r     bbpaymentsAMQPProvider.providePublishing();",
+  "main": "index.js",
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "amqplib": "^0.10.7",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.5",
+    "@types/node": "^22.13.17",
+    "typescript": "^5.6.2"
+  }
+}
