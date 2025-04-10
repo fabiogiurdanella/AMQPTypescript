@@ -1,11 +1,24 @@
-import { Channel, ChannelModel, Options, connect } from 'amqplib'
+import { Channel, Connection, Options, connect } from 'amqplib'
 import { CallbackFunction } from '../Base/payload';
-import { LoggerHandler } from '../Utility/LoggerHandler';
+import { LoggerHandler } from '../../loggerHander';
 
 const NUM_RETRIES = 5;
 
 export abstract class AMQPMessanger {
-    protected connection: ChannelModel | null = null;
+      /**
+     * Variabile statica che indica se siamo già nel mezzo di una procedura di riconnessione,
+     * per evitare che più istanze tentino di riconnettersi in parallelo.
+     */
+    private static isReconnecting = false;
+
+    /**
+     * Connessione statica condivisa da tutte le sottoclassi che estendono AMQPMessanger.
+     */
+    private static sharedConnection: Connection | null = null;
+
+    /**
+     * Ogni istanza avrà il proprio canale, ma la connessione è una sola.
+     */
     protected channel: Channel | null = null;
     
     protected RABBITMQ_USER = process.env.RABBITMQ_USER || '';
@@ -20,6 +33,7 @@ export abstract class AMQPMessanger {
     protected retries: number = 0;
 
     private callback: CallbackFunction | null;
+    // Tarek è passato di qua, ciao Tarek quanto ti senti Tarek? Ciao Tarek, si mi hai scoperto, mi sento molto Tarek grazie, e tu come stai? Molto bene Tarek, mi sento proprio Tarek oggi.
 
     constructor(queue: string, routingKey: string, callback: CallbackFunction | null) {
         try {
@@ -48,17 +62,16 @@ export abstract class AMQPMessanger {
             }
         }
     }
-
     /**
-     * This function creates a connection to a RabbitMQ server using the provided credentials and
-     * connection options.
-     */
-    private async createConnection(): Promise<void> {
-        // const connectionString = `amqp://${this.RABBITMQ_USER}:${this.RABBITMQ_PASS}@${this.RABBITMQ_HOSTNAME}:${this.RABBITMQ_PORT}`;
-        if (this.connection) {
-            return;
+        * Ritorna la connessione condivisa, creandola se non esiste già.
+        * Aggancia gli eventi 'close' ed 'error' per la riconnessione.
+    */
+    private async getConnection(): Promise<Connection> {
+        // Se la connessione statica esiste già, la riutilizzo
+        if (AMQPMessanger.sharedConnection) {
+            return AMQPMessanger.sharedConnection;
         }
-
+    
         const connectionOptions: Options.Connect = {
             protocol: 'amqp',
             hostname: this.RABBITMQ_HOSTNAME,
@@ -66,81 +79,80 @@ export abstract class AMQPMessanger {
             username: this.RABBITMQ_USER,
             password: this.RABBITMQ_PASS,
         };
-        
+    
+        // Creo la connessione (unica per tutte le sottoclassi)
+        const connection = await connect(connectionOptions, {
+            timeout: 20000,
+            heartbeat: 60,
+        });
+    
+        // Salvo la connessione nella variabile statica
+        AMQPMessanger.sharedConnection = connection;
+    
+        // Gestisco eventi di 'close' ed 'error'
+        connection.on('close', async () => {
+            LoggerHandler.warn('Connection closed. Attempting to reconnect...');
+            await this.handleCloseOrError();
+        });
+    
+        connection.on('error', async (err) => {
+            LoggerHandler.warn(`Connection error: ${err}. Attempting to reconnect...`);
+            await this.handleCloseOrError();
+        });
+    
+        return connection;
+    }
+
+    private async handleCloseOrError(): Promise<void> {
+        // Se è già in corso una riconnessione, non faccio nulla
+        if (AMQPMessanger.isReconnecting) {
+            return;
+        }
+        AMQPMessanger.isReconnecting = true;
+
         try {
-            this.connection = await connect(connectionOptions, {
-                timeout: 20000,
-                heartbeat: 60,
-            });
-
-            this.connection.on('close', async () => {
-                LoggerHandler.warn("Connection closed. Attempting to reconnect...");
-                await this.closeConnection();
-                await this.startMessanger();
-            });
-
-            this.connection.on('error', async () => {
-                LoggerHandler.warn("Connection closed. Attempting to reconnect...");
-                await this.closeConnection();
-                await this.startMessanger();
-            });
-
-        } catch (err) {
-            console.error('Failed to connect:', err);
-            throw err;
+            await this.closeConnection();
+            await this.startMessanger();
+        } catch (err: any) {
+            LoggerHandler.error(`Error while reconnecting: ${err.message}`);
+        } finally {
+            AMQPMessanger.isReconnecting = false;
         }
     }
 
     private async createChannel(): Promise<void> {
-        if (!this.connection) {
-            throw new Error('No connection available.');
-        }
+        const connection = await this.getConnection();
+        this.channel = await connection.createChannel();
+        
+        this.channel.on('close', async () => {
+            LoggerHandler.warn("Channel closed. Attempting to reconnect...");
+            await this.handleCloseOrError();
+        });
 
-        try {
-            this.channel = await this.connection.createChannel();
-            
-            this.channel.on('close', async () => {
-                LoggerHandler.warn("Channel closed. Attempting to reconnect...");
-                await this.closeConnection();
-                await this.startMessanger();
-            });
-
-            await this.channel.assertExchange(this.RABBITMQ_EXCHANGE, 'direct', { durable: false });
-
-        } catch (err) {
-            console.error('Failed to create channel:', err);
-            throw err;
-        }
+        await this.channel.assertExchange(this.RABBITMQ_EXCHANGE, 'direct', { durable: false });
     }
 
+    /**
+        * Crea e collega la coda e la routingKey, e se esiste un callback,
+        * avvia la consumer (consume).
+    */
     private async createQueues(): Promise<void> {
         if (!this.channel) {
             throw new Error('No channel available.');
         }
 
-        
-        try {
-            await this.channel.assertQueue(this.queue, { durable: false });
-            await this.channel.bindQueue(this.queue, this.RABBITMQ_EXCHANGE, this.routingKey);
-            if (this.callback !== null) {
-                this.channel.consume(this.queue, this.callback, { noAck: true });
-            }
-
-        } catch (err) {
-            console.error('Failed to create queue:', err);
-            throw err;
+        await this.channel.assertQueue(this.queue, { durable: false });
+        await this.channel.bindQueue(this.queue, this.RABBITMQ_EXCHANGE, this.routingKey);
+        if (this.callback !== null) {
+            this.channel.consume(this.queue, this.callback, { noAck: true });
         }
-    }
-
-    private async startConnection(): Promise<void> {
-        await this.createConnection();
-        await this.createChannel();
-        await this.createQueues();
     }
 
     public async startMessanger(): Promise<void> {
         try {
-            await this.startConnection();
+            await this.getConnection();
+            await this.createChannel();
+            await this.createQueues();
         } catch (err) {
             LoggerHandler.log(`Retries: ${this.retries}`)
             if (this.retries++ >= NUM_RETRIES) {
@@ -159,15 +171,14 @@ export abstract class AMQPMessanger {
                 await this.channel.close();
             }
     
-            if (this.connection) {
-                await this.connection.close();
+            if (AMQPMessanger.sharedConnection) {
+                await AMQPMessanger.sharedConnection.close();
             }
-    
-            // Resetto le variabili
-            this.channel = null;
-            this.connection = null;
         } catch (err) {
-            throw err;
+            LoggerHandler.error(`Error closing connection: ${err}`);
+        } finally {
+            AMQPMessanger.sharedConnection = null;
+            this.channel = null;
         }
     }
 }
